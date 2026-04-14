@@ -1,5 +1,7 @@
 # Kiosk AI
 
+**Repository:** [github.com/ButhainaSudi/kiosk-ai](https://github.com/ButhainaSudi/kiosk-ai)
+
 WhatsApp automation for SMEs in Tanzania: conversational AI (Claude), deterministic checkout via WhatsApp Flows + Google Sheets, Selcom payments, and bodaboda dispatch (custom fleet first, Yango fallback). Orchestration runs in **n8n**; this repo holds workflow exports, Python snippets for n8n Code nodes, prompts, and Docker-based run instructions.
 
 ## Prerequisites
