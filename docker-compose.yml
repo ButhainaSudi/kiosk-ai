@@ -1,0 +1,67 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kiosk_n8n_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: kiosk_n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5678:5678"
+    env_file:
+      - .env
+    environment:
+      # n8n core
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: ${N8N_PORT}
+      N8N_PROTOCOL: ${N8N_PROTOCOL}
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+
+      # n8n persistence
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # optional hardening
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      # Kiosk AI app envs used in workflow expressions
+      META_WA_TOKEN: ${META_WA_TOKEN}
+      META_WA_PHONE_ID: ${META_WA_PHONE_ID}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+      CLAUDE_SYSTEM_PROMPT: ${CLAUDE_SYSTEM_PROMPT}
+      SELCOM_API_KEY: ${SELCOM_API_KEY}
+      SELCOM_API_SECRET: ${SELCOM_API_SECRET}
+      SELCOM_VENDOR_ID: ${SELCOM_VENDOR_ID}
+      SELCOM_WEBHOOK_URL: ${SELCOM_WEBHOOK_URL}
+      YANGO_API_KEY: ${YANGO_API_KEY}
+      GSHEET_CONFIG_ID: ${GSHEET_CONFIG_ID}
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  postgres_data:
+  n8n_data:

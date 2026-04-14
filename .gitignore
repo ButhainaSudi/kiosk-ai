@@ -1,0 +1,20 @@
+# Secrets and local env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# TLS keys (never commit)
+certs/*.pem
+certs/*.key
+
+# Backups
+*.sql
+*.sql.gz
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

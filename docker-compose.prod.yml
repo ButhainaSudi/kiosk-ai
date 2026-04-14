@@ -1,0 +1,95 @@
+# Production-style stack: Postgres + n8n (internal only) + nginx (TLS termination).
+# Copy .env.example to .env and set N8N_HOST, WEBHOOK_URL, N8N_PROTOCOL=https, etc.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kiosk_n8n_postgres_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    networks:
+      - kiosk_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: kiosk_n8n_prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "5678"
+    env_file:
+      - .env
+    environment:
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: ${N8N_PORT}
+      N8N_PROTOCOL: ${N8N_PROTOCOL}
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      # Behind nginx reverse proxy
+      N8N_PROXY_HOPS: "1"
+
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      META_WA_TOKEN: ${META_WA_TOKEN}
+      META_WA_PHONE_ID: ${META_WA_PHONE_ID}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+      CLAUDE_SYSTEM_PROMPT: ${CLAUDE_SYSTEM_PROMPT}
+      SELCOM_API_KEY: ${SELCOM_API_KEY}
+      SELCOM_API_SECRET: ${SELCOM_API_SECRET}
+      SELCOM_VENDOR_ID: ${SELCOM_VENDOR_ID}
+      SELCOM_WEBHOOK_URL: ${SELCOM_WEBHOOK_URL}
+      YANGO_API_KEY: ${YANGO_API_KEY}
+      GSHEET_CONFIG_ID: ${GSHEET_CONFIG_ID}
+    volumes:
+      - n8n_data_prod:/home/node/.n8n
+    networks:
+      - kiosk_internal
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: kiosk_n8n_nginx_prod
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certs:/etc/nginx/certs:ro
+      - certbot_webroot:/var/www/certbot:ro
+    networks:
+      - kiosk_internal
+
+networks:
+  kiosk_internal:
+    driver: bridge
+
+volumes:
+  postgres_data_prod:
+  n8n_data_prod:
+  certbot_webroot:

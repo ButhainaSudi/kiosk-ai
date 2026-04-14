@@ -1,0 +1,158 @@
+{
+  "name": "Kiosk AI v1.0 - WhatsApp Commerce Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wa-inbound",
+        "responseMode": "responseNode",
+        "httpMethod": "POST"
+      },
+      "id": "Webhook_WA_Inbound",
+      "name": "WA Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [120, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\":\"ok\"}"
+      },
+      "id": "Respond_WA_200",
+      "name": "Respond 200 (WA)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [360, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"entry\"][0][\"changes\"][0][\"value\"][\"messages\"][0][\"interactive\"][\"type\"] || \"\"}}",
+              "operation": "equal",
+              "value2": "nfm_reply"
+            }
+          ]
+        }
+      },
+      "id": "IF_Is_Flow_Submission",
+      "name": "IF Flow Submission?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [360, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"entry\"][0][\"changes\"][0][\"value\"][\"messages\"][0][\"interactive\"][\"button_reply\"][\"id\"] || \"\"}}",
+              "operation": "contains",
+              "value2": "ACCEPT_ORD_"
+            }
+          ]
+        }
+      },
+      "id": "IF_Is_Rider_Response",
+      "name": "IF Rider Response?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [620, 360]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "# Paste scripts from /n8n-code here"
+      },
+      "id": "PY_Code_Nodes",
+      "name": "PY Code Placeholder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.selcom.co.tz/v1/checkout/create-order",
+        "method": "POST"
+      },
+      "id": "HTTP_Selcom_Initiate",
+      "name": "Selcom Initiate Payment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 220]
+    },
+    {
+      "parameters": {
+        "path": "selcom-callback",
+        "responseMode": "responseNode",
+        "httpMethod": "POST"
+      },
+      "id": "Webhook_Selcom_Callback",
+      "name": "Selcom Callback Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [120, 760]
+    },
+    {
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "Wait_60s",
+      "name": "Wait 60 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [620, 1020]
+    },
+    {
+      "parameters": {
+        "url": "https://api.yango.com/delivery/v1/orders",
+        "method": "POST"
+      },
+      "id": "HTTP_Yango_Fallback",
+      "name": "Yango Delivery Fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [860, 1020]
+    }
+  ],
+  "connections": {
+    "WA Inbound Webhook": {
+      "main": [
+        [{ "node": "Respond 200 (WA)", "type": "main", "index": 0 }],
+        [{ "node": "IF Flow Submission?", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF Flow Submission?": {
+      "main": [
+        [{ "node": "PY Code Placeholder", "type": "main", "index": 0 }],
+        [{ "node": "IF Rider Response?", "type": "main", "index": 0 }]
+      ]
+    },
+    "PY Code Placeholder": {
+      "main": [[{ "node": "Selcom Initiate Payment", "type": "main", "index": 0 }]]
+    },
+    "Webhook_Selcom_Callback": {
+      "main": [[{ "node": "Wait 60 Seconds", "type": "main", "index": 0 }]]
+    },
+    "Wait 60 Seconds": {
+      "main": [[{ "node": "Yango Delivery Fallback", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "envExamples": {
+      "META_WA_TOKEN": "wa_token_dummy_123",
+      "META_WA_PHONE_ID": "wa_phone_id_dummy_456",
+      "CLAUDE_API_KEY": "sk-ant-dummy-789",
+      "SELCOM_API_KEY": "selcom_key_dummy_000",
+      "SELCOM_API_SECRET": "selcom_secret_dummy_111",
+      "YANGO_API_KEY": "yango_key_dummy_222"
+    }
+  }
+}

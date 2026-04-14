@@ -1,0 +1,647 @@
+{
+  "name": "Kiosk AI v1.0 - Full Production Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wa-inbound",
+        "responseMode": "responseNode",
+        "httpMethod": "POST",
+        "options": {}
+      },
+      "id": "WA_WEBHOOK",
+      "name": "WA Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [140, 260]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\":true}"
+      },
+      "id": "WA_ACK",
+      "name": "WA Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [360, 120]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "out = []\nfor item in items:\n    j = item.get('json', {})\n    msg = (((j.get('entry') or [{}])[0].get('changes') or [{}])[0].get('value', {}).get('messages') or [{}])[0]\n    msg_type = msg.get('type', '')\n    interactive_type = (msg.get('interactive') or {}).get('type', '')\n    button_id = ((msg.get('interactive') or {}).get('button_reply') or {}).get('id', '')\n\n    if msg_type == 'interactive' and interactive_type == 'nfm_reply':\n        route = 'FLOW_SUBMISSION'\n    elif msg_type == 'interactive' and interactive_type == 'button_reply' and button_id.startswith('ACCEPT_ORD_'):\n        route = 'RIDER_RESPONSE'\n    else:\n        route = 'CHAT'\n\n    out.append({'json': {'route': route, 'raw': j}})\n\nreturn out"
+      },
+      "id": "ROUTER_PREP",
+      "name": "PY Normalize + Route Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 260]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.route}}",
+                    "rightValue": "CHAT",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.route}}",
+                    "rightValue": "FLOW_SUBMISSION",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.route}}",
+                    "rightValue": "RIDER_RESPONSE",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "ROUTER_SWITCH",
+      "name": "Route: Chat / Flow / Rider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [590, 260]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "out = []\nfor item in items:\n    raw = item['json']['raw']\n    msg = (((raw.get('entry') or [{}])[0].get('changes') or [{}])[0].get('value', {}).get('messages') or [{}])[0]\n    customer_phone = msg.get('from', '')\n    user_text = ''\n    if msg.get('type') == 'text':\n        user_text = (msg.get('text') or {}).get('body', '')\n    out.append({'json': {'customerPhone': customer_phone, 'userText': user_text}})\nreturn out"
+      },
+      "id": "CHAT_PREP",
+      "name": "PY Chat Input Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [830, 80]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Config!A:D"
+      },
+      "id": "GS_CONFIG",
+      "name": "Read Config Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1050, 80]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{$env.CLAUDE_API_KEY}}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"model\":\"claude-3-5-sonnet-20241022\",\"max_tokens\":350,\"system\":$env.CLAUDE_SYSTEM_PROMPT,\"messages\":[{\"role\":\"user\",\"content\":$node[\"PY Chat Input Prep\"].json[\"userText\"]}]}"
+      },
+      "id": "CLAUDE_CHAT",
+      "name": "Claude Sonnet Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1270, 80],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "out = []\nfor item in items:\n    src = item.get('json', {})\n    text = 'Samahani, kuna changamoto kidogo. Jaribu tena baada ya muda mfupi.'\n    try:\n        content = src.get('content') or []\n        if content and isinstance(content, list):\n            text = content[0].get('text') or text\n    except Exception:\n        pass\n    out.append({'json': {'replyText': text}})\nreturn out"
+      },
+      "id": "CHAT_REPLY_FORMAT",
+      "name": "PY Format Claude Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1490, 80]
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v20.0/{{$env.META_WA_PHONE_ID}}/messages",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.META_WA_TOKEN}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"messaging_product\":\"whatsapp\",\"to\":$node[\"PY Chat Input Prep\"].json[\"customerPhone\"],\"type\":\"text\",\"text\":{\"body\":$json.replyText}}"
+      },
+      "id": "WA_SEND_CHAT",
+      "name": "Send WA Chat Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1710, 80],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "import json\nfrom datetime import datetime\n\nout = []\nfor item in items:\n    raw = item['json']['raw']\n    msg = (((raw.get('entry') or [{}])[0].get('changes') or [{}])[0].get('value', {}).get('messages') or [{}])[0]\n    customer_phone = msg.get('from', '')\n    nfm = (msg.get('interactive') or {}).get('nfm_reply') or {}\n    response_json = nfm.get('response_json', '{}')\n    flow_data = json.loads(response_json) if isinstance(response_json, str) else (response_json or {})\n\n    out.append({'json': {\n        'customer_phone': customer_phone,\n        'buyer_name': flow_data.get('buyer_name', 'WhatsApp Customer'),\n        'buyer_email': flow_data.get('buyer_email', 'customer@example.com'),\n        'buyer_phone': flow_data.get('buyer_phone', customer_phone),\n        'delivery_address': flow_data.get('delivery_address', ''),\n        'cart_items': flow_data.get('cart_items', []),\n        'total_amount': float(flow_data.get('total_amount', 0)),\n        'submitted_at': datetime.utcnow().isoformat() + 'Z'\n    }})\nreturn out"
+      },
+      "id": "FLOW_PARSE",
+      "name": "PY Parse WA Flow Submission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Catalog!A:E"
+      },
+      "id": "GS_CATALOG",
+      "name": "Read Catalog Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1070, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "from datetime import datetime\n\nin_data = items[0]['json']\namount = float(in_data.get('total_amount', 0))\nif amount <= 0:\n    raise Exception('Invalid total_amount from flow payload')\norder_id = 'ORD-' + datetime.utcnow().strftime('%Y%m%d%H%M%S')\n\nout = [{\n    'json': {\n        **in_data,\n        'order_id': order_id,\n        'amount': amount,\n        'currency': 'TZS',\n        'payment_status': 'PENDING',\n        'dispatch_status': 'PENDING'\n    }\n}]\nreturn out"
+      },
+      "id": "CHECKOUT_VALIDATE",
+      "name": "PY Validate + Create Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1290, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "import os, json, hmac, hashlib\nfrom datetime import datetime, timezone\n\nout = []\nfor item in items:\n    src = item['json']\n    api_key = os.getenv('SELCOM_API_KEY', 'selcom_key_dummy_000')\n    api_secret = os.getenv('SELCOM_API_SECRET', 'selcom_secret_dummy_111')\n    vendor = os.getenv('SELCOM_VENDOR_ID', 'vendor_dummy_001')\n    webhook_url = os.getenv('SELCOM_WEBHOOK_URL', 'https://n8n.yourdomain.com/webhook/selcom-callback')\n\n    payload = {\n        'vendor': vendor,\n        'order_id': src['order_id'],\n        'buyer_email': src['buyer_email'],\n        'buyer_name': src['buyer_name'],\n        'buyer_phone': src['buyer_phone'],\n        'amount': src['amount'],\n        'currency': src['currency'],\n        'webhook_url': webhook_url,\n        'payment_methods': ['SELCOM_PAY/MASTERCARD']\n    }\n\n    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')\n    body = json.dumps(payload, separators=(',', ':'), sort_keys=True)\n    sig = hmac.new(api_secret.encode(), f'{ts}.{body}'.encode(), hashlib.sha256).hexdigest()\n\n    out.append({'json': {\n        **src,\n        'selcom_payload': payload,\n        'selcom_headers': {\n            'Authorization': f'Bearer {api_key}',\n            'Content-Type': 'application/json',\n            'X-Timestamp': ts,\n            'X-Signature': sig,\n            'X-Api-Key': api_key\n        }\n    }})\nreturn out"
+      },
+      "id": "SELCOM_SIGN",
+      "name": "PY Sign Selcom Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1510, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.selcom.co.tz/v1/checkout/create-order",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "={{$json.selcom_headers.Authorization}}" },
+            { "name": "Content-Type", "value": "={{$json.selcom_headers[\"Content-Type\"]}}" },
+            { "name": "X-Timestamp", "value": "={{$json.selcom_headers[\"X-Timestamp\"]}}" },
+            { "name": "X-Signature", "value": "={{$json.selcom_headers[\"X-Signature\"]}}" },
+            { "name": "X-Api-Key", "value": "={{$json.selcom_headers[\"X-Api-Key\"]}}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.selcom_payload}}"
+      },
+      "id": "SELCOM_INIT",
+      "name": "Initiate Selcom Push",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1730, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Orders!A:G",
+        "options": {}
+      },
+      "id": "ORDERS_APPEND",
+      "name": "Append Order Pending",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1950, 300]
+    },
+    {
+      "parameters": {
+        "path": "selcom-callback",
+        "responseMode": "responseNode",
+        "httpMethod": "POST"
+      },
+      "id": "SELCOM_WEBHOOK",
+      "name": "Selcom Callback Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [160, 840]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"received\":true}"
+      },
+      "id": "SELCOM_ACK",
+      "name": "Selcom Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [390, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.body.payment_status || $json.payment_status || \"\"}}",
+              "operation": "equal",
+              "value2": "COMPLETED"
+            }
+          ]
+        }
+      },
+      "id": "PAYMENT_OK",
+      "name": "IF Payment Completed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [390, 840]
+    },
+    {
+      "parameters": {
+        "operation": "lookup",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Orders!A:G",
+        "lookupColumn": "Order_ID",
+        "lookupValue": "={{$json.body.reference || $json.reference}}"
+      },
+      "id": "ORDER_LOOKUP",
+      "name": "Lookup Order by Reference",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [620, 840]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Orders!A:G"
+      },
+      "id": "ORDER_MARK_PAID",
+      "name": "Update Order Paid",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [850, 840]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Custom_Fleet!A:D"
+      },
+      "id": "FLEET_READ",
+      "name": "Read Custom Fleet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1080, 840]
+    },
+    {
+      "parameters": {
+        "splitIntoItems": true
+      },
+      "id": "FLEET_TO_ITEMS",
+      "name": "Fleet Rows to Items",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [1310, 840]
+    },
+    {
+      "parameters": {
+        "batchSize": 1
+      },
+      "id": "FLEET_BATCH",
+      "name": "Broadcast Riders Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1530, 840]
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v20.0/{{$env.META_WA_PHONE_ID}}/messages",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.META_WA_TOKEN}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"messaging_product\":\"whatsapp\",\"to\":$json.Phone_Number,\"type\":\"interactive\",\"interactive\":{\"type\":\"button\",\"body\":{\"text\":\"🚨 KAZI MPYA! 🚨\\nOrder: {{$node[\\\"Lookup Order by Reference\\\"].json[\\\"Order_ID\\\"]}}\\nBonyeza NDIYO kukubali.\"},\"action\":{\"buttons\":[{\"type\":\"reply\",\"reply\":{\"id\":\"ACCEPT_ORD_{{$node[\\\"Lookup Order by Reference\\\"].json[\\\"Order_ID\\\"]}}\",\"title\":\"NDIYO - Nitachukua\"}}]}}}"
+      },
+      "id": "RIDER_BROADCAST_SEND",
+      "name": "Send Rider Broadcast",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1750, 840],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "WAIT_60",
+      "name": "Wait 60 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1080, 1060]
+    },
+    {
+      "parameters": {
+        "operation": "lookup",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Orders!A:G",
+        "lookupColumn": "Order_ID",
+        "lookupValue": "={{$node[\"Lookup Order by Reference\"].json[\"Order_ID\"]}}"
+      },
+      "id": "ORDER_RECHECK",
+      "name": "Recheck Rider Assignment",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1310, 1060]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.Rider_Assigned || \"\"}}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "id": "ASSIGNMENT_EMPTY",
+      "name": "IF No Rider Assigned",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1530, 1060]
+    },
+    {
+      "parameters": {
+        "url": "https://api.yango.com/delivery/v1/orders",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.YANGO_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"external_order_id\":$json.Order_ID,\"currency\":\"TZS\",\"notes\":\"Fallback after 60s no custom rider acceptance\"}"
+      },
+      "id": "YANGO_FALLBACK",
+      "name": "Trigger Yango Fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1750, 1060],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "import re\nfrom datetime import datetime, timezone\n\nout = []\nfor item in items:\n    raw = item['json']['raw']\n    msg = (((raw.get('entry') or [{}])[0].get('changes') or [{}])[0].get('value', {}).get('messages') or [{}])[0]\n    rider_phone = msg.get('from', '')\n    button_id = ((msg.get('interactive') or {}).get('button_reply') or {}).get('id', '')\n\n    m = re.match(r'^ACCEPT_ORD_(.+)$', button_id)\n    if not m:\n        out.append({'json': {'ok': False, 'reason': 'invalid_button'}})\n        continue\n\n    out.append({'json': {\n        'ok': True,\n        'order_id': m.group(1),\n        'rider_phone': rider_phone,\n        'assigned_at': datetime.now(timezone.utc).isoformat()\n    }})\n\nreturn out"
+      },
+      "id": "RIDER_PARSE",
+      "name": "PY Parse Rider Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [830, 520]
+    },
+    {
+      "parameters": {
+        "operation": "lookup",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Orders!A:G",
+        "lookupColumn": "Order_ID",
+        "lookupValue": "={{$json.order_id}}"
+      },
+      "id": "RIDER_ORDER_LOOKUP",
+      "name": "Lookup Order For Claim",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1050, 520]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForAllItems",
+        "pythonCode": "row = items[0]['json']\nassigned = (row.get('Rider_Assigned') or '').strip()\nif assigned:\n    return [{'json': {'claim_ok': False, 'reason': 'already_claimed', 'assigned_to': assigned, 'order_id': row.get('Order_ID')}}]\n\nreturn [{'json': {'claim_ok': True, 'order_id': row.get('Order_ID')}}]"
+      },
+      "id": "RIDER_DECIDE",
+      "name": "PY First Rider Wins Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1270, 520]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.claim_ok}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "RIDER_CLAIM_IF",
+      "name": "IF Claim Allowed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1490, 520]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "sheetId": "={{$env.GSHEET_CONFIG_ID}}",
+        "range": "Orders!A:G"
+      },
+      "id": "RIDER_ASSIGN_UPDATE",
+      "name": "Update Rider Assignment",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1710, 520]
+    }
+  ],
+  "connections": {
+    "WA Inbound Webhook": {
+      "main": [
+        [{ "node": "WA Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "PY Normalize + Route Key", "type": "main", "index": 0 }]
+      ]
+    },
+    "PY Normalize + Route Key": {
+      "main": [[{ "node": "Route: Chat / Flow / Rider", "type": "main", "index": 0 }]]
+    },
+    "Route: Chat / Flow / Rider": {
+      "main": [
+        [{ "node": "PY Chat Input Prep", "type": "main", "index": 0 }],
+        [{ "node": "PY Parse WA Flow Submission", "type": "main", "index": 0 }],
+        [{ "node": "PY Parse Rider Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "PY Chat Input Prep": {
+      "main": [[{ "node": "Read Config Sheet", "type": "main", "index": 0 }]]
+    },
+    "Read Config Sheet": {
+      "main": [[{ "node": "Claude Sonnet Chat", "type": "main", "index": 0 }]]
+    },
+    "Claude Sonnet Chat": {
+      "main": [[{ "node": "PY Format Claude Reply", "type": "main", "index": 0 }]]
+    },
+    "PY Format Claude Reply": {
+      "main": [[{ "node": "Send WA Chat Message", "type": "main", "index": 0 }]]
+    },
+    "PY Parse WA Flow Submission": {
+      "main": [[{ "node": "Read Catalog Sheet", "type": "main", "index": 0 }]]
+    },
+    "Read Catalog Sheet": {
+      "main": [[{ "node": "PY Validate + Create Order", "type": "main", "index": 0 }]]
+    },
+    "PY Validate + Create Order": {
+      "main": [[{ "node": "PY Sign Selcom Request", "type": "main", "index": 0 }]]
+    },
+    "PY Sign Selcom Request": {
+      "main": [[{ "node": "Initiate Selcom Push", "type": "main", "index": 0 }]]
+    },
+    "Initiate Selcom Push": {
+      "main": [[{ "node": "Append Order Pending", "type": "main", "index": 0 }]]
+    },
+    "Selcom Callback Webhook": {
+      "main": [
+        [{ "node": "Selcom Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "IF Payment Completed", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF Payment Completed": {
+      "main": [
+        [{ "node": "Lookup Order by Reference", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Lookup Order by Reference": {
+      "main": [[{ "node": "Update Order Paid", "type": "main", "index": 0 }]]
+    },
+    "Update Order Paid": {
+      "main": [
+        [{ "node": "Read Custom Fleet", "type": "main", "index": 0 }],
+        [{ "node": "Wait 60 Seconds", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Custom Fleet": {
+      "main": [[{ "node": "Fleet Rows to Items", "type": "main", "index": 0 }]]
+    },
+    "Fleet Rows to Items": {
+      "main": [[{ "node": "Broadcast Riders Loop", "type": "main", "index": 0 }]]
+    },
+    "Broadcast Riders Loop": {
+      "main": [
+        [{ "node": "Send Rider Broadcast", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Wait 60 Seconds": {
+      "main": [[{ "node": "Recheck Rider Assignment", "type": "main", "index": 0 }]]
+    },
+    "Recheck Rider Assignment": {
+      "main": [[{ "node": "IF No Rider Assigned", "type": "main", "index": 0 }]]
+    },
+    "IF No Rider Assigned": {
+      "main": [
+        [{ "node": "Trigger Yango Fallback", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "PY Parse Rider Response": {
+      "main": [[{ "node": "Lookup Order For Claim", "type": "main", "index": 0 }]]
+    },
+    "Lookup Order For Claim": {
+      "main": [[{ "node": "PY First Rider Wins Decide", "type": "main", "index": 0 }]]
+    },
+    "PY First Rider Wins Decide": {
+      "main": [[{ "node": "IF Claim Allowed", "type": "main", "index": 0 }]]
+    },
+    "IF Claim Allowed": {
+      "main": [
+        [{ "node": "Update Rider Assignment", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Expanded Kiosk AI workflow with chat, flow checkout, Selcom callback, rider claim, and Yango fallback.",
+    "envExamples": {
+      "META_WA_TOKEN": "wa_token_dummy_123",
+      "META_WA_PHONE_ID": "wa_phone_id_dummy_456",
+      "CLAUDE_API_KEY": "sk-ant-dummy-789",
+      "SELCOM_API_KEY": "selcom_key_dummy_000",
+      "SELCOM_API_SECRET": "selcom_secret_dummy_111",
+      "YANGO_API_KEY": "yango_key_dummy_222"
+    }
+  }
+}
